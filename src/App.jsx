@@ -1,121 +1,95 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { GeminiLiveClient } from './lib/geminiLiveClient'
 import './App.css'
 
+const STATUS_LABEL = {
+  idle: 'Start conversation',
+  connecting: 'Connecting…',
+  listening: 'End conversation',
+  error: 'Try again',
+}
+
 function App() {
-  const [count, setCount] = useState(0)
+  const [status, setStatus] = useState('idle')
+  const [error, setError] = useState(null)
+  const [transcript, setTranscript] = useState([])
+  const clientRef = useRef(null)
+  const transcriptEndRef = useRef(null)
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [transcript])
+
+  useEffect(() => () => clientRef.current?.disconnect(), [])
+
+  const appendTranscript = useCallback(({ role, text }) => {
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1]
+      if (last && last.role === role) {
+        return [...prev.slice(0, -1), { role, text: last.text + text }]
+      }
+      return [...prev, { role, text }]
+    })
+  }, [])
+
+  const startConversation = useCallback(async () => {
+    setError(null)
+    setStatus('connecting')
+    try {
+      const client = new GeminiLiveClient({
+        onStatusChange: setStatus,
+        onTranscript: appendTranscript,
+        onError: (err) => setError(err.message),
+      })
+      clientRef.current = client
+      await client.connect()
+      await client.startMic()
+    } catch (err) {
+      setError(err.message)
+      setStatus('error')
+      clientRef.current?.disconnect()
+      clientRef.current = null
+    }
+  }, [appendTranscript])
+
+  const endConversation = useCallback(() => {
+    clientRef.current?.disconnect()
+    clientRef.current = null
+    setStatus('idle')
+  }, [])
+
+  const handleClick = () => {
+    if (status === 'listening') {
+      endConversation()
+    } else if (status === 'idle' || status === 'error') {
+      startConversation()
+    }
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div id="center">
+      <button
+        className={`talk-button ${status}`}
+        onClick={handleClick}
+        disabled={status === 'connecting'}
+      >
+        {STATUS_LABEL[status]}
+      </button>
 
-      <div className="ticks"></div>
+      {error && <p className="error">{error}</p>}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      {transcript.length > 0 && (
+        <div className="transcript">
+          {transcript.map((turn, i) => (
+            <p key={i} className={`turn ${turn.role}`}>
+              <span className="role">{turn.role === 'user' ? 'You' : 'Gemini'}</span>
+              {turn.text}
+            </p>
+          ))}
+          <div ref={transcriptEndRef} />
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      )}
+    </div>
   )
 }
 
