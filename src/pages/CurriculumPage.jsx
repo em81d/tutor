@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { curriculum } from '../data/curriculum'
 import { useProgress } from '../hooks/useProgress'
 import { useUser } from '../hooks/useUser'
+import { scoreToBucket } from '../lib/progressScore'
 
 function TrackableChip({ id, status, onClick, primary, secondary }) {
   const statusClasses =
@@ -48,7 +49,7 @@ function UnitSection({ unit, progress, cycleStatus }) {
                     <TrackableChip
                       key={id}
                       id={id}
-                      status={progress[id]}
+                      status={scoreToBucket(progress[id])}
                       onClick={cycleStatus}
                       primary={item.es}
                       secondary={item.note ? `${item.en} · ${item.note}` : item.en}
@@ -97,7 +98,7 @@ function UnitSection({ unit, progress, cycleStatus }) {
                     <TrackableChip
                       key={id}
                       id={id}
-                      status={progress[id]}
+                      status={scoreToBucket(progress[id])}
                       onClick={cycleStatus}
                       primary={item.es}
                       secondary={item.en}
@@ -116,9 +117,9 @@ function UnitSection({ unit, progress, cycleStatus }) {
 function CurriculumPage() {
   const { user } = useUser()
   const { progress, cycleStatus, loading } = useProgress(user?.id)
-  const total = Object.values(progress)
-  const learningCount = total.filter((s) => s === 'learning').length
-  const masteredCount = total.filter((s) => s === 'mastered').length
+  const buckets = Object.values(progress).map(scoreToBucket)
+  const learningCount = buckets.filter((b) => b === 'learning').length
+  const masteredCount = buckets.filter((b) => b === 'mastered').length
 
   return (
     <div id="curriculum" className="grow box-border px-6 pt-8 pb-16 text-left">

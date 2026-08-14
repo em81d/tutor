@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { GeminiLiveClient } from './lib/geminiLiveClient'
+import { supabase } from './lib/supabaseClient'
+import { useUser } from './hooks/useUser'
 
 const STATUS_LABEL = {
   idle: 'Start conversation',
@@ -9,12 +11,56 @@ const STATUS_LABEL = {
   error: 'Try again',
 }
 
+// Persists the finished conversation + transcript, then asks the server to score
+// which curriculum items it demonstrated. Fire-and-forget: failures are logged,
+// not surfaced, since this shouldn't block the user from starting a new conversation.
+async function saveConversation({ userId, startedAt, transcript }) {
+  if (!supabase || !userId || transcript.length === 0) return
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from('conversations')
+    .insert({ user_id: userId, started_at: startedAt, ended_at: new Date().toISOString() })
+    .select('id')
+    .single()
+  if (conversationError) {
+    console.error('[conversation] failed to save:', conversationError.message)
+    return
+  }
+
+  const { error: turnsError } = await supabase.from('transcript_turns').insert(
+    transcript.map((turn, turnIndex) => ({
+      conversation_id: conversation.id,
+      turn_index: turnIndex,
+      role: turn.role,
+      text: turn.text,
+    })),
+  )
+  if (turnsError) {
+    console.error('[conversation] failed to save transcript:', turnsError.message)
+    return
+  }
+
+  try {
+    const response = await fetch('/api/analyze-conversation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: conversation.id }),
+    })
+    if (!response.ok) throw new Error(`analyze request failed (${response.status})`)
+  } catch (err) {
+    console.error('[conversation] failed to analyze:', err.message)
+  }
+}
+
 function App() {
+  const { user } = useUser()
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState(null)
   const [transcript, setTranscript] = useState([])
   const clientRef = useRef(null)
   const transcriptEndRef = useRef(null)
+  const transcriptRef = useRef([])
+  const startedAtRef = useRef(null)
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -25,16 +71,18 @@ function App() {
   const appendTranscript = useCallback(({ role, text }) => {
     setTranscript((prev) => {
       const last = prev[prev.length - 1]
-      if (last && last.role === role) {
-        return [...prev.slice(0, -1), { role, text: last.text + text }]
-      }
-      return [...prev, { role, text }]
+      const next = last && last.role === role ? [...prev.slice(0, -1), { role, text: last.text + text }] : [...prev, { role, text }]
+      transcriptRef.current = next
+      return next
     })
   }, [])
 
   const startConversation = useCallback(async () => {
     setError(null)
     setStatus('connecting')
+    setTranscript([])
+    transcriptRef.current = []
+    startedAtRef.current = new Date().toISOString()
     try {
       const client = new GeminiLiveClient({
         onStatusChange: setStatus,
@@ -56,7 +104,8 @@ function App() {
     clientRef.current?.disconnect()
     clientRef.current = null
     setStatus('idle')
-  }, [])
+    saveConversation({ userId: user?.id, startedAt: startedAtRef.current, transcript: transcriptRef.current })
+  }, [user?.id])
 
   const handleClick = () => {
     if (status === 'listening') {

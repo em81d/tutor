@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { LEARNING_SCORE, MASTERED_SCORE, scoreToBucket } from '../lib/progressScore'
 
-// Cycles a tracked item through: untouched -> learning (yellow) -> mastered (green) -> untouched
-// Progress is stored per-user in Supabase, keyed by the item's id string.
+// Tracks a 1-10 score per item, keyed by the item's id string, persisted per-user in Supabase.
+// The UI only cares about the derived bucket (see scoreToBucket): untouched -> learning -> mastered.
 export function useProgress(userId) {
   const [progress, setProgress] = useState({})
   const [loading, setLoading] = useState(true)
@@ -12,7 +13,7 @@ export function useProgress(userId) {
     let cancelled = false
     supabase
       .from('progress')
-      .select('item_id, status')
+      .select('item_id, score')
       .eq('user_id', userId)
       .then(({ data, error }) => {
         if (cancelled) return
@@ -20,7 +21,7 @@ export function useProgress(userId) {
           console.error('[progress] failed to load:', error.message)
           setProgress({})
         } else {
-          setProgress(Object.fromEntries(data.map((row) => [row.item_id, row.status])))
+          setProgress(Object.fromEntries(data.map((row) => [row.item_id, row.score])))
         }
         setLoading(false)
       })
@@ -29,22 +30,28 @@ export function useProgress(userId) {
     }
   }, [userId])
 
+  // Manual click cycle: untouched -> learning -> mastered -> untouched, same as before,
+  // just backed by a score instead of a status string.
   const cycleStatus = useCallback(
     (itemId) => {
       setProgress((prev) => {
-        const current = prev[itemId]
-        const next = current === 'learning' ? 'mastered' : current === 'mastered' ? undefined : 'learning'
+        const currentBucket = scoreToBucket(prev[itemId])
+        const nextScore =
+          currentBucket === 'learning' ? MASTERED_SCORE : currentBucket === 'mastered' ? undefined : LEARNING_SCORE
         const updated = { ...prev }
-        if (next) {
-          updated[itemId] = next
+        if (nextScore) {
+          updated[itemId] = nextScore
         } else {
           delete updated[itemId]
         }
 
-        if (next) {
+        if (nextScore) {
           supabase
             .from('progress')
-            .upsert({ user_id: userId, item_id: itemId, status: next, updated_at: new Date().toISOString() }, { onConflict: 'user_id,item_id' })
+            .upsert(
+              { user_id: userId, item_id: itemId, score: nextScore, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id,item_id' },
+            )
             .then(({ error }) => {
               if (error) console.error('[progress] failed to save:', error.message)
             })

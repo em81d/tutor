@@ -1,6 +1,7 @@
 -- Run this in the Supabase SQL Editor (SQL Editor -> New query) once per project.
 -- No auth is used: any client with the anon key can read/write these tables.
 -- Fine for personal use; do not reuse this schema/policy setup for a public app.
+-- Schema changes after the initial setup live in supabase/migrations/ — run those too.
 
 create table if not exists users (
   id uuid primary key default gen_random_uuid(),
